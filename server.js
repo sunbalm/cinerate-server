@@ -103,6 +103,8 @@ io.on("connection", (socket) => {
   //update player name
   socket.on ("update_name", ({socketid, name}) => {
     users[socketid].name = name;
+    io.to(socketid).emit("updated_name", { name: name });
+
   })
 
   //join game
