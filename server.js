@@ -58,8 +58,6 @@ app.get("/movie", async (req, res) => {
     const resp = await fetch(url);
     const data = await resp.json();
 
-    console.log("MOVIE DETAILS", data)
-
     res.json(data);
 
   } catch (err) {
@@ -90,8 +88,6 @@ const users = {};
 const games = {};
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
-
   //add to users{}
   users[socket.id] = {
     name: socket.id,
@@ -128,7 +124,7 @@ io.on("connection", (socket) => {
   })
 
   //create game
-    socket.on ("create_game", ({socketid, gameName, playerCount, password, winCount}) => {
+  socket.on ("create_game", ({socketid, gameName, playerCount, password, winCount}) => {
         //generate random room ID
         const roomID = generateRoomID();
 
@@ -157,6 +153,7 @@ io.on("connection", (socket) => {
         io.to(socketid).emit("update_game", { gameData: newGame });
   })
 
+  //start game
   socket.on ("start_game", (game) => {
         //make game active
         game.active = true;
@@ -185,90 +182,82 @@ io.on("connection", (socket) => {
         io.to(game.roomID).emit("update_game", { gameData: game });
         io.to(game.roomID).emit("started_game", { gameData: game });
   })
+  
+  //set movie
+  socket.on ("set_movie", ({game, movie}) => {
+    //set guess movie
+    game.guessMovie = movie;
+    game.state = "submit rating";
 
-    socket.on ("set_movie", ({game, movie}) => {
-       //set guess movie
-        game.guessMovie = movie;
-        game.state = "submit rating";
+    games[game.roomID] = game;
 
-        games[game.roomID] = game;
-
-        //send updated game to roomID
-        io.to(game.roomID).emit("update_game", { gameData: game });
-        io.to(game.roomID).emit("movie_set", { gameData: game });
+    //send updated game to roomID
+    io.to(game.roomID).emit("update_game", { gameData: game });
+    io.to(game.roomID).emit("movie_set", { gameData: game });
   })
+  
+  //submit rating
+  socket.on ("submit_rating", ({game, user, movieRating}) => {
+    
+    function checkForWinner(data) {
+        const winners = data.scores.filter((player) => player.score >= data.winCount);
 
-
-      socket.on ("submit_rating", ({game, user, movieRating}) => {
-
-        function checkForWinner(data) {
-            console.log("CHECK FOR WINNERS", data)
-            const winners = data.scores.filter((player) => player.score >= data.winCount);
-
-            // No winners yet
-            if (winners.length === 0) {
-                return data;
-            }
-
-            // Add winners to data state
-            data.winners = winners;
-            console.log("WINNERS:", winners);
-            return winners;
+        // No winners yet
+        if (winners.length === 0) {
+            return data;
         }
 
-function addScore(game) {
-  console.log("ADD SCORE", game);
+        // Add winners to data state
+        data.winners = winners;
+        return winners;
+    }
 
-  const actualRating = Number(game.guessMovie.imdbRating);
+    function addScore(game) {
 
-  const validGuesses = game.guesses
-    .map((guess) => ({
-      ...guess,
-      movieRating: Number(guess.movieRating),
-    }))
-    .filter((guess) => guess.movieRating <= actualRating);
+        const actualRating = Number(game.guessMovie.imdbRating);
 
-  // Everyone went over
-  if (validGuesses.length === 0) {
-    console.log("Everyone went over. No points awarded.");
+        const validGuesses = game.guesses
+            .map((guess) => ({
+            ...guess,
+            movieRating: Number(guess.movieRating),
+            }))
+            .filter((guess) => guess.movieRating <= actualRating);
 
-    game.roundWinners = [];
+        // Everyone went over
+        if (validGuesses.length === 0) {
+
+            game.roundWinners = [];
+
+            return game;
+        }
+
+        const closestGuess = Math.max(
+            ...validGuesses.map((guess) => guess.movieRating)
+        );
+
+        const winners = validGuesses.filter(
+            (guess) => guess.movieRating === closestGuess
+        );
+
+        game.roundWinners = winners;
+
+        game.scores = game.scores.map((playerScore) => {
+            const wonPoint = winners.some(
+            (winner) => winner.user === playerScore.socketID
+            );
+
+        return {
+            ...playerScore,
+            score: wonPoint
+                ? playerScore.score + 1
+                : playerScore.score,
+        };
+    });
 
     return game;
-  }
-
-  const closestGuess = Math.max(
-    ...validGuesses.map((guess) => guess.movieRating)
-  );
-
-  const winners = validGuesses.filter(
-    (guess) => guess.movieRating === closestGuess
-  );
-
-  game.roundWinners = winners;
-
-  game.scores = game.scores.map((playerScore) => {
-    const wonPoint = winners.some(
-      (winner) => winner.user === playerScore.socketID
-    );
-
-    return {
-      ...playerScore,
-      score: wonPoint
-        ? playerScore.score + 1
-        : playerScore.score,
-    };
-  });
-
-  console.log("ROUND WINNERS:", winners);
-  console.log("UPDATED SCORES:", game.scores);
-
-  return game;
 }
 
-          function nextRound (data){
-            console.log("NEXT ROUND CALLED", data);
-            
+        function nextRound (data){
             //check winner
             if(Array.isArray(checkForWinner(games[data.roomID]))){
                 //game is over 
@@ -280,9 +269,9 @@ function addScore(game) {
                 //reset guesses
                 games[data.roomID].guesses = [];
             }
-            console.log("PRIOR TO SEND", games[data.roomID])
+            
             io.to(game.roomID).emit("update_game", { gameData: games[data.roomID] });
-  }
+        }
 
         //add user guess to guesses[]
         game.guesses.push({user, movieRating})
@@ -304,8 +293,6 @@ function addScore(game) {
 
   //disconnect
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-
     //remove from any games
 
     //remove from users{}
